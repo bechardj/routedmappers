@@ -87,12 +87,14 @@ public class RoutedMapperBeanLoader {
 
         private final ConcurrentHashMap<String, Method> methods = new ConcurrentHashMap<>();
 
-        private final ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargets;
+        private final ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories;
 
         private final Supplier<Object> keySupplier;
 
-        public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargets, Class<T> classToInvoke, Supplier<Object> keySupplier) {
-            this.invocationTargets = invocationTargets;
+        private final Map<Object, T> invocationTargets = new ConcurrentHashMap<>();
+
+        public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories, Class<T> classToInvoke, Supplier<Object> keySupplier) {
+            this.invocationTargetFactories = invocationTargetFactories;
             this.keySupplier = keySupplier;
 
             for (Method method : classToInvoke.getDeclaredMethods()) {
@@ -105,9 +107,13 @@ public class RoutedMapperBeanLoader {
                 throws Throwable {
             Object key = keySupplier.get();
             Assert.notNull(key, "Tried to invoke mapper without setting target!");
+            if (!invocationTargets.containsKey(key)) {
+                T invocationTarget = invocationTargetFactories.get(key).getObject();
+                Assert.notNull(invocationTarget, "No invocation target found!");
+                invocationTargets.put(key, invocationTargetFactories.get(key).getObject());
+            }
             LOGGER.debug("Invoked method: {} with target {}", method.getName(), key);
-            MapperFactoryBean<T> mfb = invocationTargets.get(key);
-            return methods.get(method.getName()).invoke(mfb.getObject(), args);
+            return methods.get(method.getName()).invoke(invocationTargets.get(key), args);
         }
     }
 
