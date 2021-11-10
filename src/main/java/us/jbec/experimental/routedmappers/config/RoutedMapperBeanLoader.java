@@ -74,9 +74,9 @@ public class RoutedMapperBeanLoader {
 
         Object proxyInstance = Proxy.newProxyInstance(clazz.getClassLoader(),
                 new Class[]{clazz},
-                new RoutedInvocationHandler<>(invocationTargetMap, clazz, properties.getInvocationTargetSupplier()));
+                new RoutedInvocationHandler<>(invocationTargetMap, properties.getInvocationTargetSupplier()));
 
-        context.registerBean(clazz, () -> (T) proxyInstance);
+        context.registerBean(clazz, () -> clazz.cast(proxyInstance));
 
     }
 
@@ -85,21 +85,15 @@ public class RoutedMapperBeanLoader {
 
         private static final Logger LOGGER = LoggerFactory.getLogger(RoutedInvocationHandler.class);
 
-        private final ConcurrentHashMap<String, Method> methods = new ConcurrentHashMap<>();
-
         private final ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories;
 
         private final Supplier<Object> keySupplier;
 
         private final Map<Object, T> invocationTargets = new ConcurrentHashMap<>();
 
-        public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories, Class<T> classToInvoke, Supplier<Object> keySupplier) {
+        public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories, Supplier<Object> keySupplier) {
             this.invocationTargetFactories = invocationTargetFactories;
             this.keySupplier = keySupplier;
-
-            for (Method method : classToInvoke.getDeclaredMethods()) {
-                this.methods.put(method.getName(), method);
-            }
         }
 
         @Override
@@ -113,7 +107,7 @@ public class RoutedMapperBeanLoader {
                 invocationTargets.put(key, invocationTargetFactories.get(key).getObject());
             }
             LOGGER.debug("Invoked method: {} with target {}", method.getName(), key);
-            return methods.get(method.getName()).invoke(invocationTargets.get(key), args);
+            return method.invoke(invocationTargets.get(key), args);
         }
     }
 

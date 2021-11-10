@@ -175,39 +175,37 @@ Now we need to configure each class and add it to Spring's application context. 
 
 ```java
 private void addBeansToContext() {
-        for (Class<?> clazz : this.classesToLoad) {
-            processClass(clazz);
-        }
+    for (Class<?> clazz : this.classesToLoad) {
+        processClass(clazz);
+    }
+}
+
+private <T> void processClass(Class<T> clazz) {
+    ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetMap = new ConcurrentHashMap<>();
+
+    for (Map.Entry<Object, SqlSessionFactory> entry : properties.getSqlSessionFactoriesConcurrentHashMap().entrySet()) {
+        SqlSessionFactory sqlSessionFactory = entry.getValue();
+        MapperFactoryBean<T> mapperFactoryBean = new MapperFactoryBean<>(clazz);
+        sqlSessionFactory.getConfiguration().addMapper(clazz);
+        mapperFactoryBean.setSqlSessionFactory(sqlSessionFactory);
+        invocationTargetMap.put(entry.getKey(), mapperFactoryBean);
     }
 
-    private <T> void processClass(Class<T> clazz) {
-        ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetMap = new ConcurrentHashMap<>();
+    Object proxyInstance = Proxy.newProxyInstance(clazz.getClassLoader(),
+            new Class[]{clazz},
+            new RoutedInvocationHandler<>(invocationTargetMap, properties.getInvocationTargetSupplier()));
 
-        for (Map.Entry<Object, SqlSessionFactory> entry : properties.getSqlSessionFactoriesConcurrentHashMap().entrySet()) {
-            SqlSessionFactory sqlSessionFactory = entry.getValue();
-            MapperFactoryBean<T> mapperFactoryBean = new MapperFactoryBean<>(clazz);
-            sqlSessionFactory.getConfiguration().addMapper(clazz);
-            mapperFactoryBean.setSqlSessionFactory(sqlSessionFactory);
-            invocationTargetMap.put(entry.getKey(), mapperFactoryBean);
-        }
+    context.registerBean(clazz, () -> clazz.cast(proxyInstance));
 
-        Object proxyInstance = Proxy.newProxyInstance(clazz.getClassLoader(),
-                new Class[]{clazz},
-                new RoutedInvocationHandler<>(invocationTargetMap, clazz, properties.getInvocationTargetSupplier()));
-
-        context.registerBean(clazz, () -> (T) proxyInstance);
-
-    }
+}
 ```
 
 The `InvocationHandler` is pretty straight forward. It just delegates any method calls to the underlying mapper depending on the configured supplier.
 
 ```java
-private static class RoutedInvocationHandler<T> implements InvocationHandler {
+    private static class RoutedInvocationHandler<T> implements InvocationHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RoutedInvocationHandler.class);
-
-    private final ConcurrentHashMap<String, Method> methods = new ConcurrentHashMap<>();
 
     private final ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories;
 
@@ -215,13 +213,9 @@ private static class RoutedInvocationHandler<T> implements InvocationHandler {
 
     private final Map<Object, T> invocationTargets = new ConcurrentHashMap<>();
 
-    public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories, Class<T> classToInvoke, Supplier<Object> keySupplier) {
+    public RoutedInvocationHandler(ConcurrentHashMap<Object, MapperFactoryBean<T>> invocationTargetFactories, Supplier<Object> keySupplier) {
         this.invocationTargetFactories = invocationTargetFactories;
         this.keySupplier = keySupplier;
-
-        for (Method method : classToInvoke.getDeclaredMethods()) {
-            this.methods.put(method.getName(), method);
-        }
     }
 
     @Override
@@ -235,7 +229,7 @@ private static class RoutedInvocationHandler<T> implements InvocationHandler {
             invocationTargets.put(key, invocationTargetFactories.get(key).getObject());
         }
         LOGGER.debug("Invoked method: {} with target {}", method.getName(), key);
-        return methods.get(method.getName()).invoke(invocationTargets.get(key), args);
+        return method.invoke(invocationTargets.get(key), args);
     }
 }
 ```
